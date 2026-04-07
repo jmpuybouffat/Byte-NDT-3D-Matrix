@@ -16,7 +16,7 @@ class FocalLawCalculator:
         num_elements = len(self.probe.elements)
         times_of_flight = np.zeros(num_elements)
         
-        v1 = self.self.wedge.velocity
+        v1 = self.wedge.velocity
         v2 = self.specimen.velocity
         target = np.array([target_x, target_y, target_z])
         
