@@ -3,7 +3,7 @@ import numpy as np
 import plotly.graph_objects as go
 from src.hardware import Probe2D, Wedge, Specimen
 # CORRECTION 1 : L'import de la fonction est bien là
-from src.physics import FocalLawCalculator, compute_beam_pressure_2d
+from src.physics import FocalLawCalculator, compute_beam_pressure_2d, generate_a_scan_echo
 
 # --- CONFIGURATION PAGE ---
 st.set_page_config(page_title="Byte NDT - Interface FPGA", layout="wide")
@@ -143,3 +143,34 @@ with c1:
 
     fig.update_layout(scene=dict(zaxis=dict(range=[fz+10, -30], autorange="reversed")), height=750)
     st.plotly_chart(fig, use_container_width=True)
+
+    # --- AFFICHAGE DU SIGNAL A-SCAN (OSCILLOSCOPE) ---
+# On l'affiche uniquement si on n'est pas en mode FMC (qui génère trop de signaux)
+if mode != "3. FMC (Full Matrix Capture)":
+    st.markdown("---")
+    st.markdown(f"### 📈 Signal de Réponse (A-Scan) à la profondeur {fz} mm")
+    
+    with st.spinner("Génération de l'écho et du bruit..."):
+        # 1. Calcul mathématique du signal
+        time_us, a_scan = generate_a_scan_echo(fz, v_s, freq)
+        
+        # 2. Création du graphique style "Oscilloscope"
+        fig_scan = go.Figure()
+        fig_scan.add_trace(go.Scatter(
+            x=time_us, y=a_scan, 
+            mode='lines', 
+            line=dict(color='lime', width=1.5), # Vert fluo classique
+            name="Amplitude"
+        ))
+        
+        # 3. Design de l'interface graphique
+        fig_scan.update_layout(
+            xaxis_title="Temps de vol (µs)",
+            yaxis_title="Amplitude (Unité Arbitraire)",
+            height=300,
+            margin=dict(l=0, r=0, t=10, b=0),
+            plot_bgcolor='black',  # Fond noir pour le look NDT
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='white')
+        )
+        st.plotly_chart(fig_scan, use_container_width=True)
