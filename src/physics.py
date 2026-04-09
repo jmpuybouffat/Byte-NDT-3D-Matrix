@@ -28,3 +28,47 @@ class FocalLawCalculator:
         # Conversion stricte en nanosecondes ENTIÈRES pour le FPGA
         delays_ns = np.round((np.max(tof) - tof) * 1e9).astype(int)
         return delays_ns, np.array(points_i)
+    
+    import numpy as np
+
+def compute_beam_pressure_2d(probe_elements, delays_ns, velocity_m_s, freq_mhz, x_bounds, z_bounds, resolution=1.0):
+    """
+    Calcule le champ de pression acoustique 2D (Slice XZ).
+    """
+    # Conversion des unités pour les mathématiques
+    omega = 2 * np.pi * (freq_mhz * 1e6)  # Pulsation
+    k = omega / velocity_m_s              # Nombre d'onde (k)
+    
+    # 1. Création de la grille d'observation (notre écran virtuel)
+    x = np.arange(x_bounds[0], x_bounds[1], resolution)
+    z = np.arange(z_bounds[0], z_bounds[1], resolution)
+    X, Z = np.meshgrid(x, z)
+    Y = np.zeros_like(X) # On se place à Y=0 pour couper le faisceau au centre
+    
+    # Initialisation du champ de pression complexe (des zéros partout au début)
+    P = np.zeros_like(X, dtype=np.complex128)
+    
+    # 2. Superposition (Principe de Huygens) : on additionne la contribution de chaque élément
+    for i in range(len(probe_elements)):
+        ex, ey, ez = probe_elements[i]
+        delay_s = delays_ns[i] * 1e-9 # Conversion des nanosecondes en secondes
+        
+        # Distance géométrique entre l'élément i et chaque point de la grille
+        R = np.sqrt((X - ex)**2 + (Y - ey)**2 + (Z - ez)**2)
+        R[R == 0] = 1e-9 # Sécurité pour éviter la division par zéro au contact
+        
+        # Phase de l'onde : distance parcourue moins le retard appliqué
+        phase = (k * R) - (omega * delay_s)
+        
+        # Addition de l'onde (Amplitude qui décroit en 1/R * exponentielle complexe de la phase)
+        P += (1/R) * np.exp(1j * phase)
+        
+    # 3. Conversion en Décibels (dB) pour un bel affichage
+    pressure_mag = np.abs(P)
+    # Normalisation par rapport au point le plus fort
+    pressure_db = 20 * np.log10(pressure_mag / np.max(pressure_mag))
+    
+    # On coupe à -20 dB pour ne pas afficher le "bruit" de fond
+    pressure_db[pressure_db < -20] = -20
+    
+    return x, z, pressure_db
