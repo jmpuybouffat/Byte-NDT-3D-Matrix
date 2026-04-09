@@ -28,8 +28,7 @@ class FocalLawCalculator:
         # Conversion stricte en nanosecondes ENTIÈRES pour le FPGA
         delays_ns = np.round((np.max(tof) - tof) * 1e9).astype(int)
         return delays_ns, np.array(points_i)
-    
-    import numpy as np
+
 
 def compute_beam_pressure_2d(probe_elements, delays_ns, velocity_m_s, freq_mhz, x_bounds, z_bounds, resolution=1.0):
     """
@@ -72,3 +71,34 @@ def compute_beam_pressure_2d(probe_elements, delays_ns, velocity_m_s, freq_mhz, 
     pressure_db[pressure_db < -20] = -20
     
     return x, z, pressure_db
+
+
+def generate_a_scan_echo(focus_z_mm, velocity_m_s, freq_mhz, sampling_rate_mhz=100):
+    """
+    Simule le signal A-Scan (écho) provenant d'un défaut (type EDM) situé au point focal.
+    Génère un signal temporel réaliste pour l'entraînement d'une IA.
+    """
+    # 1. Calcul du Temps de Vol (Aller-Retour) vers la profondeur Z
+    # On multiplie par 2 car l'onde fait l'aller ET le retour
+    tof_round_trip_s = 2 * (focus_z_mm * 1e-3) / velocity_m_s
+    
+    # 2. Création de l'axe du temps (Fenêtre d'écoute de 100 microsecondes)
+    fs = sampling_rate_mhz * 1e6
+    time_s = np.arange(0, 100e-6, 1/fs)
+    
+    # 3. Création de l'impulsion ultrasonore (Onde de Gabor)
+    omega = 2 * np.pi * (freq_mhz * 1e6)
+    # La largeur de l'impulsion dépend de la fréquence (plus la fréquence est haute, plus l'impulsion est courte)
+    sigma = 1.0 / (freq_mhz * 1e6) 
+    
+    # L'écho est une sinusoïde amortie centrée sur le temps de vol
+    echo = np.cos(omega * (time_s - tof_round_trip_s)) * np.exp(-((time_s - tof_round_trip_s)**2) / (2 * sigma**2))
+    
+    # 4. Ajout d'un bruit blanc (Essentiel pour le Machine Learning !)
+    noise = np.random.normal(0, 0.05, len(time_s))
+    a_scan = echo + noise
+    
+    # 5. Conversion du temps en microsecondes (µs) pour un affichage lisible
+    time_us = time_s * 1e6
+    
+    return time_us, a_scan
