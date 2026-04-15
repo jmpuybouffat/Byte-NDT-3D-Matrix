@@ -4,3 +4,7 @@ plotly
 numpy
 rtree
 scipy
+streamlit
+numpy
+plotly
+numpy-stl
