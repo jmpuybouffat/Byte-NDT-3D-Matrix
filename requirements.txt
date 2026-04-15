@@ -1,4 +1,6 @@
 streamlit
-numpy
-scipy
+trimesh
 plotly
+numpy
+rtree
+scipy

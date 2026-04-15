@@ -1,176 +1,159 @@
 import streamlit as st
-import numpy as np
+import trimesh
 import plotly.graph_objects as go
-from src.hardware import Probe2D, Wedge, Specimen
-# CORRECTION 1 : L'import de la fonction est bien là
-from src.physics import FocalLawCalculator, compute_beam_pressure_2d, generate_a_scan_echo
+import os
+import numpy as np
+import math
 
-# --- CONFIGURATION PAGE ---
-st.set_page_config(page_title="Byte NDT - Interface FPGA", layout="wide")
+st.set_page_config(layout="wide", page_title="Byte NDT Digital Twin LSB")
 
-# --- GESTION BILINGUE ---
-if 'lang' not in st.session_state: 
-    st.session_state.lang = 'FR'
+# --- VOS RÉGLAGES GÉOMÉTRIQUES PARFAITS (INTOUCHABLES) ---
+SCALE_PARFAIT = 0.700
+RX_PARFAIT, RY_PARFAIT, RZ_PARFAIT = 180.0, 0.0, 180.0
+DX_PARFAIT, DY_PARFAIT, DZ_PARFAIT = 40.0, 291.0, 15.0
 
-def toggle_lang(): 
-    st.session_state.lang = 'EN' if st.session_state.lang == 'FR' else 'FR'
+# --- PARAMÈTRES PHYSIQUES DU SABOT ---
+V_REXOLITE = 2330.0
+ANGLE_SABOT = 36.0
 
-st.sidebar.button("🌐 Switch Language (FR/EN)", on_click=toggle_lang)
-L = st.session_state.lang
+st.title("Byte NDT - Digital Twin LSB 941 (Version Manuelle Fiable)")
 
-T = {
-    "FR": {"title": "🚀 Byte NDT : Jumeau Numérique FPGA", "mode": "⚙️ Stratégie FPGA", "probe": "💎 Sonde Matricielle", "media": "📐 Milieux (Sliders)", "beam": "🎯 Pilotage Faisceau", "dim": "📝 Dimensions & Gaps", "laws": "⏱️ Lois Focales (ns - INT)", "fmc": "📡 Séquence FMC"},
-    "EN": {"title": "🚀 Byte NDT: FPGA Digital Twin", "mode": "⚙️ FPGA Strategy", "probe": "💎 Matrix Probe", "media": "📐 Media (Sliders)", "beam": "🎯 Beam Steering", "dim": "📝 Dimensions & Gaps", "laws": "⏱️ Focal Laws (ns - INT)", "fmc": "📡 FMC Sequence"}
-}
+dossier_actuel = os.path.dirname(__file__)
+nom_du_fichier_stl = "DuvhaLPStg5BldRoot_EDM_NOTCHES.stl" 
+chemin_fichier = os.path.join(dossier_actuel, nom_du_fichier_stl)
 
-# --- BARRE LATÉRALE ---
-with st.sidebar:
-    st.header(T[L]["mode"])
-    mode = st.selectbox("Mode :", ["1. Point Unique / Single Point", "2. Balayage Sectoriel / S-Scan", "3. FMC (Full Matrix Capture)"])
-    
-    st.header(T[L]["probe"])
-    col1, col2 = st.columns(2)
-    nx = col1.number_input("Nx", 1, 64, 8)
-    ny = col2.number_input("Ny", 1, 64, 8)
-    pitch = st.number_input("Pitch (mm)", 0.1, 5.0, 0.43)
-    
-    col3, col4 = st.columns(2)
-    gap_x = col3.slider("Gap X (mm)", 0.01, 0.15, 0.05, step=0.01)
-    gap_y = col4.slider("Gap Y (mm)", 0.01, 0.15, 0.05, step=0.01)
-    
-    freq = st.number_input("Fréquence (MHz)", 1.0, 20.0, 5.0)
-    
-    st.header(T[L]["media"])
-    v_w = st.slider("Vitesse Sabot / Wedge Vel. (m/s)", 1000, 4000, 2330, step=10)
-    v_s = st.slider("Vitesse Acier / Steel Vel. (m/s)", 2000, 7000, 3330, step=10)
-    w_ang = st.slider("Angle Sabot / Wedge Angle (°)", 0.0, 70.0, 36.0)
+@st.cache_resource
+def load_and_center_mesh(chemin):
+    mesh = trimesh.load_mesh(chemin)
+    centroid = mesh.centroid
+    return mesh.vertices - centroid, mesh.faces[:, 0], mesh.faces[:, 1], mesh.faces[:, 2]
 
-    st.header(T[L]["beam"])
-    fz = st.slider("Focus Z (mm)", 5.0, 150.0, 103.0)
+try:
+    v_centered, i_mesh, j_mesh, k_mesh = load_and_center_mesh(chemin_fichier)
 
-    if mode == "1. Point Unique / Single Point":
-        theta = st.slider("Steering θ (°)", -60.0, 60.0, 15.0)
-        phi = st.slider("Skew φ (°)", -180.0, 180.0, -31.0)
-    elif mode == "2. Balayage Sectoriel / S-Scan":
-        theta_start = st.slider("Départ Steering θ (°)", 0.0, 80.0, 35.0)
-        theta_end = st.slider("Fin Steering θ (°)", 0.0, 80.0, 70.0)
-        phi = st.slider("Skew φ (Fixe) (°)", -180.0, 180.0, 10.0)
+    st.sidebar.header("🛠️ Mode de Travail")
+    mode_travail = st.sidebar.radio(
+        "Choisissez l'interface :",
+        ["1. Preuve de Concept (Faisceau Simple)", "2. Phase 2 : Sabot & S-Scan (Imasonic)"]
+    )
+    st.sidebar.markdown("---")
 
-# --- INITIALISATION ---
-probe = Probe2D(nx=nx, ny=ny, pitch_x=pitch, pitch_y=pitch, gap_x=gap_x, gap_y=gap_y, freq_mhz=freq)
-calc = FocalLawCalculator(probe, Wedge(velocity=v_w, angle_deg=w_ang), Specimen(velocity=v_s))
+    # Application de la transformation avec VOS valeurs
+    v_scaled = v_centered * SCALE_PARFAIT
+    rx, ry, rz = math.radians(RX_PARFAIT), math.radians(RY_PARFAIT), math.radians(RZ_PARFAIT)
+    cx, sx = math.cos(rx), math.sin(rx)
+    cy, sy = math.cos(ry), math.sin(ry)
+    cz, sz = math.cos(rz), math.sin(rz)
 
-# --- AFFICHAGE PRINCIPAL ---
-st.title(T[L]["title"]) 
-c1, c2 = st.columns([2, 1])
+    Rx = np.array([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]], dtype=float)
+    Ry = np.array([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]], dtype=float)
+    Rz = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+    v_rot = v_scaled @ (Rz @ Ry @ Rx).T
+    x_fin, y_fin, z_fin = v_rot[:, 0] + DX_PARFAIT, v_rot[:, 1] + DY_PARFAIT, v_rot[:, 2] + DZ_PARFAIT
 
-fig = go.Figure()
-fig.add_trace(go.Scatter3d(x=probe.elements[:,0], y=probe.elements[:,1], z=np.zeros(nx*ny)-20, mode='markers', marker=dict(size=3, color='blue'), name="Sonde PA"))
+    # --- MATHÉMATIQUES DES TRAJECTOIRES ---
+    NB_POINTS = 100
+    t = np.linspace(-30, 110, NB_POINTS)
+    x_capteurs = t
+    y_capteurs = -0.005488828669 * t**2 + 0.4063509956 * t + 322.5637799
+    z_capteurs = -0.003609404789 * t**2 + 0.3901494991 * t + 19.70324623
 
-with c2:
-    st.markdown(f"### {T[L]['dim']}")
-    st.write(f"- **Lx x Ly :** {probe.lx:.2f} x {probe.ly:.2f} mm")
-    st.write(f"- **Gaps (X / Y) :** {probe.gap_x:.2f} / {probe.gap_y:.2f} mm")
+    matrice_c1 = np.array([
+        [-34.97, 273.07, -27.16], [-20.63, 274.52, -27.16], [-6.24, 275.23, -27.16],
+        [8.18, 275.18, -27.16], [22.57, 274.38, -27.16], [36.89, 272.81, -27.16],
+        [51.12, 270.51, -27.16], [65.21, 267.46, -27.16], [79.12, 263.68, -27.16],
+        [92.82, 259.2, -27.16], [106.25, 253.37, -27.16], [113.39, 248.06, -27.16]
+    ])
+    x_edm, y_edm, z_edm = matrice_c1[:, 0], matrice_c1[:, 1], matrice_c1[:, 2]
 
-if mode == "1. Point Unique / Single Point":
-    tx = fz * np.tan(np.radians(theta)) * np.cos(np.radians(phi))
-    ty = fz * np.tan(np.radians(theta)) * np.sin(np.radians(phi))
-    # CORRECTION 2 : on appelle bien la variable d_ns
-    d_ns, points_i = calc.compute_fermat_3d(tx, ty, fz) 
-    
-    mid = len(probe.elements) // 2
-    fig.add_trace(go.Scatter3d(x=[probe.elements[mid,0], points_i[mid,0], tx], y=[probe.elements[mid,1], points_i[mid,1], ty], z=[-20, 0, fz], mode='lines+markers', line=dict(color='red', width=5), name="Beam"))
-    
-    with c2:
-        st.markdown(f"### {T[L]['laws']}")
-        st.dataframe(d_ns.reshape(nx, ny).astype(int))
+    # --- LE PILOTAGE 100% MANUEL (Plus de plantage) ---
+    st.sidebar.header("🕹️ Pilotage Manuel")
+    st.sidebar.info("Utilisez le curseur ci-dessous pour déplacer le sabot pas à pas.")
+    index_scan = st.sidebar.slider("Position du Sabot (Scan Index)", 0, NB_POINTS - 1, 0)
 
-elif mode == "2. Balayage Sectoriel / S-Scan":
-    angles = np.linspace(theta_start, theta_end, 5)
-    all_delays = {}
-    
-    for ang in angles:
-        tx = fz * np.tan(np.radians(ang)) * np.cos(np.radians(phi))
-        ty = fz * np.tan(np.radians(ang)) * np.sin(np.radians(phi))
-        d_ns, p_i = calc.compute_fermat_3d(tx, ty, fz)
-        all_delays[f"Steering {ang:.1f}°"] = d_ns
+    pos_x, pos_y, pos_z = x_capteurs[index_scan], y_capteurs[index_scan], z_capteurs[index_scan]
+    cible_x, cible_y, cible_z = pos_x, np.interp(pos_x, x_edm, y_edm), np.interp(pos_x, x_edm, z_edm)
+    distance_faisceau = math.sqrt((cible_x - pos_x)**2 + (cible_y - pos_y)**2 + (cible_z - pos_z)**2)
+
+    # --- VRAIE PHYSIQUE : Calcul de la distance entre le faisceau et les vrais défauts ---
+    distances_aux_defauts = np.sqrt((x_edm - cible_x)**2 + (y_edm - cible_y)**2 + (z_edm - cible_z)**2)
+    erreur_pointage = np.min(distances_aux_defauts)
+    # L'amplitude s'effondre si on rate le défaut de plus de 2-3 mm
+    amplitude_reelle = 0.85 * math.exp(-0.5 * (erreur_pointage / 3.0)**2)
+
+    col1, col2 = st.columns([2.5, 1])
+
+    with col1:
+        fig3d = go.Figure()
+        fig3d.add_trace(go.Mesh3d(x=x_fin, y=y_fin, z=z_fin, i=i_mesh, j=j_mesh, k=k_mesh, color='lightgray', opacity=0.3, name="Aube", hoverinfo='skip'))
+        fig3d.add_trace(go.Scatter3d(x=x_capteurs, y=y_capteurs, z=z_capteurs, mode='lines', line=dict(color='lightblue', width=4), name="Trajectoire"))
+        fig3d.add_trace(go.Scatter3d(x=x_edm, y=y_edm, z=z_edm, mode='markers', marker=dict(color='red', size=4), name="EDM"))
         
-        mid = len(probe.elements) // 2
-        fig.add_trace(go.Scatter3d(x=[probe.elements[mid,0], p_i[mid,0], tx], y=[probe.elements[mid,1], p_i[mid,1], ty], z=[-20, 0, fz], mode='lines+markers', line=dict(width=3), name=f"Beam {ang:.1f}°"))
-        
-    with c2:
-        st.markdown(f"### {T[L]['laws']} (Skew: {phi}°)")
-        angle_sel = st.selectbox("Angle :", list(all_delays.keys()))
-        st.dataframe(all_delays[angle_sel].reshape(nx, ny).astype(int))
-        # On s'assure que d_ns correspond à l'angle sélectionné pour l'affichage du faisceau
-        d_ns = all_delays[angle_sel]
+        if "1. Preuve de Concept" in mode_travail:
+            taille_sabot = 15
+            hx, hy, hz = taille_sabot/2, taille_sabot/2, 8
+            sabot_x = [pos_x-hx, pos_x+hx, pos_x+hx, pos_x-hx, pos_x-hx, pos_x+hx, pos_x+hx, pos_x-hx]
+            sabot_y = [pos_y-hy, pos_y-hy, pos_y+hy, pos_y+hy, pos_y-hy, pos_y-hy, pos_y+hy, pos_y+hy]
+            sabot_z = [pos_z, pos_z, pos_z, pos_z, pos_z+hz, pos_z+hz, pos_z+hz, pos_z+hz]
+            sabot_i = [0, 1, 5, 4, 0, 4, 7, 3, 3, 2, 6, 7, 1, 2, 6, 5, 0, 1, 2, 3, 4, 5, 6, 7]
+            sabot_j = [1, 5, 6, 0, 4, 7, 6, 2, 2, 6, 5, 4, 2, 6, 5, 4, 1, 2, 3, 0, 5, 6, 7, 4]
+            sabot_k = [5, 6, 2, 4, 7, 6, 5, 1, 6, 5, 1, 0, 6, 5, 1, 0, 2, 3, 0, 1, 6, 7, 4, 5]
+            fig3d.add_trace(go.Mesh3d(x=sabot_x, y=sabot_y, z=sabot_z, i=sabot_i, j=sabot_j, k=sabot_k, color='orange', opacity=0.8, name="PA Wedge"))
+            fig3d.add_trace(go.Scatter3d(x=[pos_x, cible_x], y=[pos_y, cible_y], z=[pos_z, cible_z], mode='lines', line=dict(color='yellow', width=6), name="Faisceau Central", hoverinfo='skip'))
 
-elif mode == "3. FMC (Full Matrix Capture)":
-    with c2:
-        st.markdown(f"### {T[L]['fmc']}")
-        st.info("Acquisition TFM : Tx = 1 to N, Rx = All.")
-        st.write(f"- **Tx :** {nx*ny}")
-        st.write(f"- **A-Scans :** {nx*ny}")
-
-# CORRECTION 3 : un seul "with c1:" et une protection pour le mode FMC
-with c1:
-    if mode != "3. FMC (Full Matrix Capture)":
-        # --- CALCUL ET AFFICHAGE DU FAISCEAU ACOUSTIQUE ---
-        with st.spinner("Calcul du champ de pression en cours..."): 
-            x_grid, z_grid, pressure = compute_beam_pressure_2d(
-                probe.elements, 
-                d_ns,             
-                v_s,              
-                freq,             
-                x_bounds=[-30, 80], 
-                z_bounds=[0, 150], 
-                resolution=1.0    
-            )
+        else:
+            L, W = 25, 20
+            H_avant = 5
+            H_arriere = 5 + L * math.tan(math.radians(ANGLE_SABOT))
+            wx = [pos_x-W/2, pos_x+W/2, pos_x+W/2, pos_x-W/2, pos_x-W/2, pos_x+W/2, pos_x+W/2, pos_x-W/2]
+            wy = [pos_y-L/2, pos_y-L/2, pos_y+L/2, pos_y+L/2, pos_y-L/2, pos_y-L/2, pos_y+L/2, pos_y+L/2]
+            wz = [pos_z, pos_z, pos_z, pos_z, pos_z+H_avant, pos_z+H_avant, pos_z+H_arriere, pos_z+H_arriere]
+            wi = [0, 1, 5, 4, 0, 4, 7, 3, 3, 2, 6, 7, 1, 2, 6, 5, 0, 1, 2, 3, 4, 5, 6, 7]
+            wj = [1, 5, 6, 0, 4, 7, 6, 2, 2, 6, 5, 4, 2, 6, 5, 4, 1, 2, 3, 0, 5, 6, 7, 4]
+            wk = [5, 6, 2, 4, 7, 6, 5, 1, 6, 5, 1, 0, 6, 5, 1, 0, 2, 3, 0, 1, 6, 7, 4, 5]
+            fig3d.add_trace(go.Mesh3d(x=wx, y=wy, z=wz, i=wi, j=wj, k=wk, color='darkorange', opacity=0.9, name=f"Wedge {ANGLE_SABOT}° (Rexolite)"))
             
-            y_grid = np.zeros((len(z_grid), len(x_grid)))
-            
-            fig.add_trace(go.Surface(
-                x=x_grid,
-                y=y_grid,
-                z=z_grid,
-                surfacecolor=pressure,
-                colorscale='Jet',     
-                cmin=-20, cmax=0,     
-                opacity=0.6,          
-                showscale=False,
-                name="Faisceau (dB)"
-            ))
+            longueur_ray = 60
+            for angle in [35, 70]: 
+                for skew in [-10, 0, 10]: 
+                    r_angle = math.radians(angle)
+                    r_skew = math.radians(skew)
+                    dy = -longueur_ray * math.cos(r_angle)
+                    dz = -longueur_ray * math.sin(r_angle)
+                    dx = longueur_ray * math.sin(r_skew)
+                    fig3d.add_trace(go.Scatter3d(
+                        x=[pos_x, pos_x+dx], y=[pos_y, pos_y+dy], z=[pos_z, pos_z+dz], 
+                        mode='lines', line=dict(color='yellow', width=2, dash='solid' if skew==0 else 'dot'), showlegend=False, hoverinfo='skip'
+                    ))
 
-    fig.update_layout(scene=dict(zaxis=dict(range=[fz+10, -30], autorange="reversed")), height=750)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # --- AFFICHAGE DU SIGNAL A-SCAN (OSCILLOSCOPE) ---
-# On l'affiche uniquement si on n'est pas en mode FMC (qui génère trop de signaux)
-if mode != "3. FMC (Full Matrix Capture)":
-    st.markdown("---")
-    st.markdown(f"### 📈 Signal de Réponse (A-Scan) à la profondeur {fz} mm")
-    
-    with st.spinner("Génération de l'écho et du bruit..."):
-        # 1. Calcul mathématique du signal
-        time_us, a_scan = generate_a_scan_echo(fz, v_s, freq)
-        
-        # 2. Création du graphique style "Oscilloscope"
-        fig_scan = go.Figure()
-        fig_scan.add_trace(go.Scatter(
-            x=time_us, y=a_scan, 
-            mode='lines', 
-            line=dict(color='lime', width=1.5), # Vert fluo classique
-            name="Amplitude"
-        ))
-        
-        # 3. Design de l'interface graphique
-        fig_scan.update_layout(
-            xaxis_title="Temps de vol (µs)",
-            yaxis_title="Amplitude (Unité Arbitraire)",
-            height=300,
-            margin=dict(l=0, r=0, t=10, b=0),
-            plot_bgcolor='black',  # Fond noir pour le look NDT
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(color='white')
+        fig3d.update_layout(
+            scene=dict(aspectmode='data', dragmode='turntable', camera=dict(eye=dict(x=-1.8, y=0.5, z=1.2), center=dict(x=0, y=0, z=-0.1))), 
+            margin=dict(l=0, r=0, b=0, t=0), legend=dict(x=0, y=1, bgcolor="rgba(255,255,255,0.8)")
         )
-        st.plotly_chart(fig_scan, use_container_width=True)
+        st.plotly_chart(fig3d, use_container_width=True, key="fig3d")
+
+    with col2:
+        axe_profondeur = np.linspace(0, 150.0, 500)
+        signal = np.random.normal(0, 0.02, 500)
+        
+        # Le signal ne monte que si le faisceau est sur le défaut
+        echo_defaut = amplitude_reelle * np.exp(-0.5 * ((axe_profondeur - distance_faisceau) / 1.5)**2)
+        signal += echo_defaut
+
+        fig_ascan = go.Figure()
+        fig_ascan.add_trace(go.Scatter(x=axe_profondeur, y=signal, mode='lines', line=dict(color='lime', width=2), name="Signal RF"))
+        fig_ascan.update_layout(
+            plot_bgcolor='black', paper_bgcolor='white', margin=dict(l=0, r=0, b=0, t=30), showlegend=False,
+            xaxis=dict(title="Profondeur (mm)", color='black', gridcolor='#333333', range=[0, 150]), 
+            yaxis=dict(title="Amplitude (%)", range=[-0.1, 1.1], color='black', gridcolor='#333333')
+        )
+        
+        if amplitude_reelle > 0.4:
+            st.success(f"🔴 **DÉFAUT DÉTECTÉ**\n\nDistance = {distance_faisceau:.2f} mm")
+        else:
+            st.info(f"📍 **Scan en cours...**\n\nCherche EDM...")
+            
+        st.plotly_chart(fig_ascan, use_container_width=True, key="fig_ascan")
+
+except Exception as e:
+    st.error(f"Erreur technique : {e}")
